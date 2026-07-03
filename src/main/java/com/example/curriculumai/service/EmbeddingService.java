@@ -2,6 +2,7 @@ package com.example.curriculumai.service;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +20,12 @@ public class EmbeddingService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // Hugging Face's free serverless models cold-start when idle and
+    // return 503 "currently loading" while spinning up. Retrying after
+    // a short wait almost always succeeds on the 2nd or 3rd attempt.
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long RETRY_DELAY_MS = 4000;
+
     @PostConstruct
     public void initClient() {
         // Hugging Face deprecated api-inference.huggingface.co.
@@ -31,7 +38,10 @@ public class EmbeddingService {
     }
 
     public float[] getEmbedding(String text) {
+        return getEmbeddingWithRetry(text, 1);
+    }
 
+    private float[] getEmbeddingWithRetry(String text, int attempt) {
         try {
             Map<String, String> body = Map.of(
                     "inputs", text
@@ -67,8 +77,27 @@ public class EmbeddingService {
 
             return vector;
 
+        } catch (HttpServerErrorException e) {
+            // 503 = model is cold-starting on Hugging Face's side.
+            // Wait and retry rather than failing the whole request.
+            boolean isColdStart = e.getStatusCode().value() == 503;
+
+            if (isColdStart && attempt < MAX_ATTEMPTS) {
+                try {
+                    Thread.sleep(RETRY_DELAY_MS);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                return getEmbeddingWithRetry(text, attempt + 1);
+            }
+
+            throw new RuntimeException(
+                    "Embedding service unavailable after " + attempt + " attempt(s): "
+                            + e.getStatusCode() + " - " + e.getResponseBodyAsString(), e
+            );
+
         } catch (Exception e) {
-            throw new RuntimeException("Embedding generation failed", e);
+            throw new RuntimeException("Embedding generation failed: " + e.getMessage(), e);
         }
     }
 }

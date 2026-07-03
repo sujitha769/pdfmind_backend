@@ -71,15 +71,19 @@ public class UploadController {
     @GetMapping("/ask")
     public String askQuestion(@RequestParam String question,
                               @RequestParam(required = false) String source) {
+        try {
+            float[] questionVector = embeddingService.getEmbedding(question);
+            String matchedChunk = qdrantService.searchVector(questionVector, source);
 
-        float[] questionVector = embeddingService.getEmbedding(question);
-        String matchedChunk = qdrantService.searchVector(questionVector, source);
+            if (matchedChunk == null || matchedChunk.isBlank()) {
+                return "I could not find this in the uploaded curriculum.";
+            }
 
-        if (matchedChunk == null || matchedChunk.isBlank()) {
-            return "I could not find this in the uploaded curriculum.";
+            return groqService.askWithContext(matchedChunk, question);
+
+        } catch (Exception e) {
+            return "Something went wrong answering that question: " + e.getMessage();
         }
-
-        return groqService.askWithContext(matchedChunk, question);
     }
 
     @GetMapping("/groq-test")
