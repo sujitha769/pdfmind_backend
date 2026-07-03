@@ -82,7 +82,8 @@ public class UploadController {
             return groqService.askWithContext(matchedChunk, question);
 
         } catch (Exception e) {
-            return "Something went wrong answering that question: " + e.getMessage();
+            String cause = (e.getCause() != null) ? e.getCause().getMessage() : e.getMessage();
+            return "Something went wrong answering that question: " + e.getMessage() + " | Cause: " + cause;
         }
     }
 
